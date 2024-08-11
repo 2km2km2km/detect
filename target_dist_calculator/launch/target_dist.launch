@@ -1,0 +1,40 @@
+<launch>
+    <arg name="raw_img" default="True" />
+    <arg name="camera_type" default="1" />
+    <arg name="compress_img" default="False" />
+    <arg name="dist_thre_add_point" default="0.4" />
+    <arg name="dist_thre_final" default="0.4" />
+    <arg name="dist_use_lidar" default="15.0" />
+    <!-- <node name="target_dist_calculator" pkg="target_dist_calculator" type="target_dist_node.py" output="screen" > -->
+    <node name="target_dist_calculator" pkg="target_dist_calculator" type="target_distance_calculator" output="screen" >
+        <param name="raw_img" value="$(arg raw_img)" />
+        <param name="camera_type" value="$(arg camera_type)" />
+        <param name="compress_img" value="$(arg compress_img)" />
+        <param name="dist_thre_add_point" value="$(arg dist_thre_add_point)" />
+        <param name="dist_thre_final" value="$(arg dist_thre_final)" />
+        <param name="dist_use_lidar" value="$(arg dist_use_lidar)" />
+        <param name="person_width" value="0.5" />
+        <param name="person_heidht" value="1.7" />
+        <param name="width_rate" value="376.824" />
+        <param name="height_rate" value="377.400" />
+        <param name="config_path" value="$(find target_dist_calculator)/config/mid_drone.yaml"/>
+        <!-- <param name="config_path" value="$(find target_dist_calculator)/config/mid_rs_drone.yaml"/> -->
+        <param name="czd_save_path" value="$(find py_yolov8)/src/to_czd/coord.txt"/>
+        <param name="pc_topic" value="/cloud_registered_body"/>
+        <param name="czd_img_save_path" value="$(find py_yolov8)/src/to_czd/img.jpg"/>
+    
+    </node>
+
+    <group if="$(arg compress_img)">
+        <node name="image_transport_republish_A" pkg="image_transport" type="republish" output="screen" 
+            args="raw in:=/detection/image_CAM_A/target_img_with_coord compressed out:=/detection/image_CAM_A/target_img_with_coord" />
+        <node name="image_transport_republish_B" pkg="image_transport" type="republish" output="screen" 
+            args="raw in:=/detection/image_CAM_B/target_img_with_coord compressed out:=/detection/image_CAM_B/target_img_with_coord" />
+        <node name="image_transport_republish_C" pkg="image_transport" type="republish" output="screen" 
+            args="raw in:=/detection/image_CAM_C/target_img_with_coord compressed out:=/detection/image_CAM_C/target_img_with_coord" />
+        <node name="image_transport_republish_D" pkg="image_transport" type="republish" output="screen" 
+            args="raw in:=/detection/image_CAM_D/target_img_with_coord compressed out:=/detection/image_CAM_D/target_img_with_coord" />
+
+    </group>
+
+</launch>

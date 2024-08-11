@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+
+from collections import deque
+import copy
+import rospy
+import cv2
+import numpy as np
+import math
+from sensor_msgs.msg import Image, PointCloud2, PointField
+from nav_msgs.msg import Odometry
+from custom_msgs.msg import BoundingBoxArray, TargetCoordinate
+from geometry_msgs.msg import Point
+from cv_bridge import CvBridge
+import sensor_msgs.point_cloud2 as pc2
+import tf.transformations as tf_trans
+import std_msgs.msg
+
+class TargetDistanceCalculator:
+    def __init__(self):
+        # self.publish_compressed = rospy.get_param('~compress_img', True)
+        self.publish_raw = rospy.get_param('~raw_img', True)
+    
+        self.bridge = CvBridge()
+        self.camera_matrix = np.array([[895.79468, 0.0, 674.04929], 
+                                       [0.0, 896.49722, 392.10665], 
+                                       [0.0, 0.0, 1.0]])
+        self.dist_coeffs = np.array([0.031106, -0.056139, 0.000962, -0.001041, 0.000000])
+                
+        self.camera_matrix = np.array([[895.79468, 0.0, 674.04929], 
+                                       [0.0, 896.49722, 392.10665], 
+                                       [0.0, 0.0, 1.0]])
+        self.dist_coeffs = np.array([0.031106, -0.056139, 0.000962, -0.001041, 0.000000])
+        
+        tmp = math.sqrt(2) / 2
+        
+        self.rotation_matrix = {
+            'CAM_A' : np.array([[tmp,   0, -tmp],
+                                [tmp,   0,  tmp],
+                                [0,     -1,   0]]),
+            'CAM_B' : np.array([[tmp,   0,  tmp],
+                                [-tmp,  0,  tmp],
+                                [0,     -1,   0]]),
+            'CAM_C' : np.array([[-tmp,  0,  tmp],
+                                [-tmp,  0, -tmp],
+                                [0,     -1,   0]]),
+            'CAM_D' : np.array([[-tmp,  0, -tmp],
+                                [tmp,   0, -tmp],
+                                [0,     -1,   0]]),
+        }
+
+        length = 0.26 # length of the arm
+        self.translation_vector = {
+            'CAM_A' : np.array([-length, length, 0]),
+            'CAM_B' : np.array([length, length,  0]),
+            'CAM_C' : np.array([length,  -length,  0]),
+            'CAM_D' : np.array([-length,  -length, 0]),
+        }
+
+        self.diff = 0.5 # Control maximal accepted diff time between computed coordinates and (lidar and odom)
+
+        self.target_msgs = {
+            'CAM_A': [],
+            'CAM_B': [],
+            'CAM_C': [],
+            'CAM_D': [],
+        }
+        self.accumulated_points = []
+        self.received_bbox = False
+        # self.received_img = False
+        self.received_img = False
+
+        #Subscribe to image and bounding box information of four cameras
+        self.images = {}
+        self.image_subs = {
+            'CAM_A': rospy.Subscriber('/detection/image_CAM_A/annotated_image', Image, self.image_callback, 'CAM_A'),
+            'CAM_B': rospy.Subscriber('/detection/image_CAM_B/annotated_image', Image, self.image_callback, 'CAM_B'),
+            'CAM_C': rospy.Subscriber('/detection/image_CAM_C/annotated_image', Image, self.image_callback, 'CAM_C'),
+            'CAM_D': rospy.Subscriber('/detection/image_CAM_D/annotated_image', Image, self.image_callback, 'CAM_D')
+        }
+        self.bboxes = {}
+        self.bbox_subs = {
+            'CAM_A': rospy.Subscriber('/detection/image_CAM_A/bbox_info', BoundingBoxArray, self.bbox_callback, 'CAM_A'),
+            'CAM_B': rospy.Subscriber('/detection/image_CAM_B/bbox_info', BoundingBoxArray, self.bbox_callback, 'CAM_B'),
+            'CAM_C': rospy.Subscriber('/detection/image_CAM_C/bbox_info', BoundingBoxArray, self.bbox_callback, 'CAM_C'),
+            'CAM_D': rospy.Subscriber('/detection/image_CAM_D/bbox_info', BoundingBoxArray, self.bbox_callback, 'CAM_D')
+        }
+
+        # Subscribe to lidar point cloud data
+        self.got_lidar = False
+        self.point_cloud_data = None
+        self.point_cloud_cache = deque(maxlen=20)     
+        self.lidar_sub = rospy.Subscriber('/cloud_registered_body', PointCloud2, self.lidar_callback)
+
+        # Subscribe to odometry
+        self.position = None
+        self.orientation = None
+        self.odometry_cache = deque(maxlen=20)  
+        self.odometry = rospy.Subscriber('/Odometry_map', Odometry, self.odometry_callback)
+
+        # Publisher for target coordinates and images in body frame
+        self.rate = 20
+        self.last_published_time = rospy.Time.now()
+        self.target_pubs_coord = {
+            'CAM_A': rospy.Publisher('/detection/image_CAM_A/target_coordinates', TargetCoordinate, queue_size=10),
+            'CAM_B': rospy.Publisher('/detection/image_CAM_B/target_coordinates', TargetCoordinate, queue_size=10),
+            'CAM_C': rospy.Publisher('/detection/image_CAM_C/target_coordinates', TargetCoordinate, queue_size=10),
+            'CAM_D': rospy.Publisher('/detection/image_CAM_D/target_coordinates', TargetCoordinate, queue_size=10),
+        }
+        self.target_pubs_img_with_coord = {
+            'CAM_A': rospy.Publisher('/detection/image_CAM_A/target_img_with_coord', Image, queue_size=10),
+            'CAM_B': rospy.Publisher('/detection/image_CAM_B/target_img_with_coord', Image, queue_size=10),
+            'CAM_C': rospy.Publisher('/detection/image_CAM_C/target_img_with_coord', Image, queue_size=10),
+            'CAM_D': rospy.Publisher('/detection/image_CAM_D/target_img_with_coord', Image, queue_size=10),
+        }
+        # self.target_pubs_img_with_coord_compressed = {
+        #     'CAM_A': rospy.Publisher('/detection/image_CAM_A/target_img_compressed', Image, queue_size=10),
+        #     'CAM_B': rospy.Publisher('/detection/image_CAM_B/target_img_compressed', Image, queue_size=10),
+        #     'CAM_C': rospy.Publisher('/detection/image_CAM_C/target_img_compressed', Image, queue_size=10),
+        #     'CAM_D': rospy.Publisher('/detection/image_CAM_D/target_img_compressed', Image, queue_size=10),
+        # }
+
+        # Publisher for target coordinates in world frame
+        self.target_pubs_coord_world = [
+            rospy.Publisher('/detection/target_coordinates/drone', PointCloud2, queue_size=1000),
+            rospy.Publisher('/detection/target_coordinates/people', PointCloud2, queue_size=1000),
+            rospy.Publisher('/detection/target_coordinates/box', PointCloud2, queue_size=1000),
+        ]
+        # self.target_pubs_coord_body = [
+        #     rospy.Publisher('/detection/target_coordinates/drone_body', PointCloud2, queue_size=1000),
+        #     rospy.Publisher('/detection/target_coordinates/people_body', PointCloud2, queue_size=1000),
+        #     rospy.Publisher('/detection/target_coordinates/box_body', PointCloud2, queue_size=1000),
+        # ]
+
+        # Publisher for a group of closest pointclouds
+        self.closest_pc = rospy.Publisher('/detection/closest_points', PointCloud2, queue_size=10)
+        
+        # Publisher for target bearing
+        self.target_pub_bearing_camera = rospy.Publisher('/detection/target_bearing', Point, queue_size=10)
+
+
+        # test the self.calculate_depth_and_position()roatation matrix and translation vector of cameras
+        # def test(camera):
+        #     p_cam = [0,0,0.01]
+        #     rotation_matrix = self.rotation_matrix[camera]
+        #     translation_vector = self.translation_vector[camera]
+        #     p_body = np.dot(rotation_matrix, p_cam) + translation_vector
+        #     print("p_cam: %.3f,%.3f,%.3f, p_body: %.3f,%.3f,%.3f," % (*p_cam, *p_body))
+        # for cam in self.rotation_matrix.keys():
+        #     print(cam)
+        #     test(cam)
+
+    def image_callback(self, msg, camera):
+        # This callback function processes image data
+        self.images[camera] = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        self.received_img = True
+        # time_error = rospy.Time.now() - msg.header.stamp
+        # print('time from publish to receive:%f'%time_error.to_sec())
+
+    def bbox_callback(self, msg, camera):
+        # This callback function processes bounding box information
+        self.bboxes[camera] = msg
+        bbox_xyxy = msg.bbox_xyxy
+       
+        if len(bbox_xyxy) != 0:
+            self.received_bbox = True
+
+    def lidar_callback(self, msg):
+        # This callback function processes lidar point cloud data
+        # self.point_cloud_data = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
+        data = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
+        stamp = msg.header.stamp
+        self.point_cloud_cache.append({'stamp': stamp, 'data': data})
+        self.got_lidar = True
+
+    def odometry_callback(self, msg):
+        # This callback function processes odometry data
+        # self.position = msg.pose.pose.position
+        # self.orientation = msg.pose.pose.orientation
+        odometry_data = msg.pose.pose
+        stamp = msg.header.stamp
+        self.odometry_cache.append({'stamp': stamp, 'data': odometry_data})
+
+    def publish_image_with_coordinates(self, camera):
+        if self.received_img == False:
+            return
+        
+        current_time = rospy.Time.now()
+        elapsed_time = (current_time - self.last_published_time).to_sec()
+
+        if elapsed_time < 1.0 / self.rate:
+            return  # Not enough time has passed, return without publishing
+        
+        image = self.images[camera].copy()
+
+        for target_msg, bbox_center in self.target_msgs[camera]:
+            # Put the depth and 3D coordinates
+            depth_and_position = "Depth: %.2f\n3D Position: (%.2f, %.2f, %.2f)" % (target_msg.depth, target_msg.target_x, target_msg.target_y, target_msg.target_z)
+            depth, position = depth_and_position.split('\n')
+            cv2.putText(image, depth, (int(bbox_center[0]), int(bbox_center[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            # cv2.putText(image, position, (int(bbox_center[0]), int(bbox_center[1] + 25)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            # cv2.putText(image, depth_and_position, (int(bbox_center[0]), int(bbox_center[1])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        if self.publish_raw:
+            original_image_msg = self.bridge.cv2_to_imgmsg(image, "bgr8")
+            self.target_pubs_img_with_coord[camera].publish(original_image_msg)
+
+        # if self.publish_compressed:
+        #     compressed_image = self.compress_image(image)
+        #     compressed_image_msg = self.bridge.cv2_to_imgmsg(compressed_image, "bgr8")
+        #     self.target_pubs_img_with_coord_compressed[camera].publish(compressed_image_msg)
+
+        self.received_img = False
+        self.last_published_time = current_time
+    
+    def compress_image(self, image):
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+        result, encimg = cv2.imencode('.jpg', image, encode_param)
+        compressed_image = cv2.imdecode(encimg, 1)
+        return compressed_image
+    
+    def transform_point(self, point):
+        position  = self.position
+        orientation = self.orientation
+        rot_matrix = tf_trans.quaternion_matrix([orientation.x, orientation.y, orientation.z, orientation.w])
+        rot_matrix = rot_matrix[:3, :3]  # Take the top-left 3x3 submatrix
+        position_array = np.array([position.x, position.y, position.z])
+        transformed_point = np.dot(point, np.linalg.inv(rot_matrix)) + position_array
+        return transformed_point
+    
+    def publish_target_coordinates_world_frame(self, point, target_class):
+        if target_class != 1:
+            return
+        # Add the new point to the accumulated points list
+        transformed_point = self.transform_point(point) # transform to world frame
+        self.accumulated_points.clear()
+        self.accumulated_points.append(transformed_point)
+
+        # Create a PointCloud2 message
+        header = std_msgs.msg.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = 'map'
+
+        fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                  PointField('y', 4, PointField.FLOAT32, 1),
+                  PointField('z', 8, PointField.FLOAT32, 1)]
+
+        # Convert the accumulated points list to a numpy array
+        points_array = np.array(self.accumulated_points)
+
+        cloud = pc2.create_cloud(header, fields, points_array)
+
+        self.target_pubs_coord_world[int(target_class)].publish(cloud)
+        return
+
+        # Create a PointCloud2 message in body, debug perpose
+        header = std_msgs.msg.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = 'map'
+
+        fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                  PointField('y', 4, PointField.FLOAT32, 1),
+                  PointField('z', 8, PointField.FLOAT32, 1)]
+
+        # Convert the accumulated points list to a numpy array
+        self.accumulated_points.clear()
+        self.accumulated_points.append(point)
+        points_array = np.array(self.accumulated_points)
+        cloud = pc2.create_cloud(header, fields, points_array)
+        self.target_pubs_coord_body[int(target_class)].publish(cloud)
+
+    def publish_target_bearing(self, bearing):
+        bearing_point = Point()
+        bearing_point.x = bearing[0]
+        bearing_point.y = bearing[1]
+        bearing_point.z = bearing[2]
+        self.target_pub_bearing_camera.publish(bearing_point)
+
+    def publish_closest_pc(self, point_list):
+        header = std_msgs.msg.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = 'map' 
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1)
+        ]
+        transformed_points = [self.transform_point(point) for point in point_list]
+        points_array = np.array(point_list, dtype=np.float32)
+
+        cloud_msg = pc2.create_cloud(header, fields, points_array)
+
+        self.closest_pc.publish(cloud_msg)
+
+    def check_point_validation(self, camera, point):
+        if(camera == 'CAM_D' and point[0] < 0 and point[1] < 0):
+            return True
+        elif(camera == 'CAM_C' and point[0] > 0 and point[1] < 0):
+            return True
+        elif(camera == 'CAM_B' and point[0] > 0 and point[1] > 0):
+            return True
+        elif(camera == 'CAM_A' and point[0] < 0 and point[1] > 0):
+            return True
+        else:
+            return False
+    
+    def select_on_stamp(self, bbox_time, diff):
+        lidar_idx, lidar_time, lidar_diff = self.find_closest_diff(self.point_cloud_cache, bbox_time)
+        odom_idx, odom_time, odom_diff = self.find_closest_diff(self.odometry_cache, bbox_time)
+
+        if lidar_idx is not None:
+            self.point_cloud_data = self.point_cloud_cache[lidar_idx]['data']
+        if odom_idx is not None:
+            self.position = self.odometry_cache[odom_idx]['data'].position
+            self.orientation = self.odometry_cache[odom_idx]['data'].orientation
+
+        print(f"Lidar index: {lidar_idx}, time difference: {lidar_diff}")
+        if lidar_diff > diff:
+            rospy.loginfo('Lidar diff bigger than given!')
+        print(f"Odometry index: {odom_idx}, time difference: {odom_diff}")
+        if odom_diff > diff:
+            rospy.loginfo('Odom diff bigger than given!')
+
+        return lidar_time, lidar_idx, odom_time, odom_idx
+
+    def find_closest_diff(self, data_list, target_time):
+        data_list = data_list.copy()
+        closest_idx = None
+        closest_time = None
+        min_diff = float('inf')
+
+        for i, data in enumerate(data_list):
+            time_diff = abs(data['stamp'] - target_time).to_sec()
+            if time_diff < min_diff:
+                min_diff = time_diff
+                closest_idx = i
+                closest_time = data['stamp']
+
+        return closest_idx, closest_time, min_diff
+
+        
+    def calculate_depth_and_position(self):
+    # Calculate depth and 3D position of each target using lidar data
+        bboxes_copy = copy.deepcopy(self.bboxes)
+        for camera, bboxes in bboxes_copy.items():
+            self.target_msgs[camera].clear()
+
+            bbox_time = bboxes.header.stamp
+            bbox_class = bboxes.bbox_cls
+            bbox_xyxy = bboxes.bbox_xyxy
+            num_bboxes = len(bbox_xyxy) // 4  # Each bounding box has 4 coordinates
+
+            for i in range(num_bboxes):
+                x1 = bbox_xyxy[4 * i]
+                y1 = bbox_xyxy[4 * i + 1]
+                x2 = bbox_xyxy[4 * i + 2]
+                y2 = bbox_xyxy[4 * i + 3]
+                center_x = (x1 + x2) / 2.0
+                center_y = (y1 + y2) / 2.0
+
+                # Convert image coordinates to camera coordinates
+                center_x_camera = (center_x - self.camera_matrix[0, 2]) / self.camera_matrix[0, 0]
+                center_y_camera = (center_y - self.camera_matrix[1, 2]) / self.camera_matrix[1, 1]
+
+                # # Convert camera coordinates to body coordinates
+                # target_vector = np.array([center_x_camera, center_y_camera, 1.0])  # Assuming the target is at a distance of 1 unit
+                # rotation_matrix = self.rotation_matrix[camera]
+                # translation_vector = self.translation_vector[camera]
+                # target_vector = np.dot(rotation_matrix, target_vector) + translation_vector
+                # target_vector /= np.linalg.norm(target_vector)  # Normalize the target vector
+                
+                # Compute the expression of the line in body coordinates
+                rotation_matrix = self.rotation_matrix[camera]
+                translation_vector = self.translation_vector[camera]
+
+                camera_origin_point = translation_vector
+                end_point_camera = np.array([center_x_camera, center_y_camera, 1.0])
+                end_point_world = np.dot(rotation_matrix, end_point_camera) + translation_vector # camera to body frame
+                bearing_camera = (end_point_world - camera_origin_point)
+                bearing_camera /= np.linalg.norm(bearing_camera)                
+                line = [camera_origin_point, bearing_camera]
+
+                self.publish_target_bearing(bearing_camera)
+
+                def distance_to_line(point, line):
+                    A, direction_vector = line
+                    B = A + direction_vector
+                    # Compute distance = |P-A| x |B-A| / |B-A|
+                    cross_product = np.cross(point - A, B - A)
+                    distance = np.linalg.norm(cross_product) / np.linalg.norm(B - A)
+                    return distance
+                
+                # Find the closest point in the lidar data to the center of the bounding box
+                closest_point = None
+                min_distance = float('inf')
+
+                closest_point_list = []
+                if self.got_lidar is False:
+                    print('Not get lidar data!')
+                    continue
+
+                # Select corresponding pointcloud data according to stamp
+                self.select_on_stamp(bbox_time, self.diff)
+            
+                # for point in self.lidar_data:
+                for point in self.point_cloud_data:
+                    if self.check_point_validation(camera, point) == False:
+                        continue
+                    point = np.array(point)
+                    distance = distance_to_line(point, line)
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_point = point
+                    if distance < 0.1:
+                        closest_point_list.append(point)
+
+                closest_list_len = len(closest_point_list)
+                if closest_list_len != 0 and min_distance <= 0.2:
+                    # self.publish_closest_pc(closest_point_list)
+                    # Calculate depth and 3D position
+                    sum = [0, 0, 0]
+                    for p in closest_point_list:
+                        sum[0] += p[0]
+                        sum[1] += p[1]
+                        sum[2] += p[2]
+                    closest_point[0] = sum[0]/closest_list_len
+                    closest_point[1] = sum[1]/closest_list_len
+                    closest_point[2] = sum[2]/closest_list_len
+
+                    # Filter some points
+                    # threshold = 0.5
+                    # filtered_point_list = []
+                    # for point in closest_point_list:
+                    #     distance_to_center = np.linalg.norm(point - closest_point)
+                    #     if distance_to_center <= threshold:
+                    #         filtered_point_list.append(point)
+
+                    # filtered_list_len = len(filtered_point_list)
+                    # if filtered_list_len > 0:
+                    #     sum = [0, 0, 0]
+                    #     for p in filtered_point_list:
+                    #         sum[0] += p[0]
+                    #         sum[1] += p[1]
+                    #         sum[2] += p[2]
+                    #     closest_point[0] = sum[0]/filtered_list_len
+                    #     closest_point[1] = sum[1]/filtered_list_len
+                    #     closest_point[2] = sum[2]/filtered_list_len           
+
+                    depth = np.sqrt(closest_point[0]**2 + closest_point[1]**2 + closest_point[2]**2)
+        
+                    print("Camera: %s, Depth: %.2f m, 3D Position in World: (%.2f, %.2f, %.2f), Min dist:%.2f" %
+                          (camera, depth, *closest_point, min_distance))
+                    
+                    # Publish the target coordinates and imgs
+                    target_msg = TargetCoordinate()
+                    target_msg.target_class = bbox_class[i]
+                    target_msg.target_x = closest_point[0]
+                    target_msg.target_y = closest_point[1]
+                    target_msg.target_z = closest_point[2]
+                    target_msg.depth = depth
+                    self.target_msgs[camera].append((target_msg, (center_x, center_y)))
+
+                    # Publish the target coordinates in world frame
+                    self.publish_target_coordinates_world_frame(closest_point, bbox_class[i])
+            
+            self.publish_image_with_coordinates(camera)
+        self.bboxes.clear()
+
+
+if __name__ == '__main__':
+    rospy.init_node('target_distance_calculator')
+    calculator = TargetDistanceCalculator()
+    
+    while not rospy.is_shutdown():
+        if calculator.received_bbox:
+            calculator.calculate_depth_and_position()
+            calculator.received_bbox = False
+        pass

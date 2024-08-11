@@ -1,0 +1,20 @@
+CAM_A:
+  rotation: [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+  translation: [-0.1, 0.0, 0.0]
+  img_topic: "/detection/infra2/annotated_image"
+  bbox_topic: "/detection/infra2/bbox_info"
+CAM_B:
+  rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  translation: [0.0, 1.0, 0.0]
+  img_topic: "/detection/usb_cam_B/annotated_image"
+  bbox_topic: "/detection/usb_cam_B/bbox_info"
+CAM_C:
+  rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  translation: [0.0, 1.0, 0.0]
+  img_topic: "/detection/usb_cam_B/annotated_image"
+  bbox_topic: "/detection/usb_cam_B/bbox_info"
+CAM_D:
+  rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  translation: [0.0, 1.0, 0.0]
+  img_topic: "/detection/usb_cam_B/annotated_image"
+  bbox_topic: "/detection/usb_cam_B/bbox_info"
