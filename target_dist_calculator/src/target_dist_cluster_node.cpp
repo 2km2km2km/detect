@@ -488,8 +488,8 @@
                     };
                     
                     
-                    std::cout<<"cluster_indices "<<cluster_indices.size()<<std::endl;
-                    std::cout<<"w "<<x2-x1<<" h "<<y2-y1<<std::endl;
+                    // std::cout<<"cluster_indices "<<cluster_indices.size()<<std::endl;
+                    // std::cout<<"w "<<x2-x1<<" h "<<y2-y1<<std::endl;
                     if(cluster_indices.size()>0) {
                         // 遍历每个聚类
                         int cluster_id = 0;
@@ -666,40 +666,41 @@
 
                 }
             }
-            sensor_msgs::ImagePtr clu_img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", vis_cluster).toImageMsg();
-            clu_image_pub_.publish(clu_img_msg);
+            // sensor_msgs::ImagePtr clu_img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", vis_cluster).toImageMsg();
+            // clu_image_pub_.publish(clu_img_msg);
             // 将彩色图像转换为 ROS 消息并发布
-            sensor_msgs::ImagePtr depth_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", color_mapped_image).toImageMsg();
-            depth_pub_.publish(depth_msg);
+            // sensor_msgs::ImagePtr depth_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", color_mapped_image).toImageMsg();
+            // depth_pub_.publish(depth_msg);
             // 可视化
-            sensor_msgs::PointCloud2 pc_world_msg;
+            // sensor_msgs::PointCloud2 pc_world_msg;
 
             // 将PCL的点云转换为ROS的消息格式
-            pcl::toROSMsg(pc_world, pc_world_msg);
+            // pcl::toROSMsg(pc_world, pc_world_msg);
 
             // 设置header
-            pc_world_msg.header.frame_id = "world";  // 根据需要设置frame_id
-            pc_world_msg.header.stamp = ros::Time::now();
+            // pc_world_msg.header.frame_id = "world";  // 根据需要设置frame_id
+            // pc_world_msg.header.stamp = ros::Time::now();
 
             // 发布点云
-            pc_pub_.publish(pc_world_msg);
+            // pc_pub_.publish(pc_world_msg);
 
-            if(pos_cloud->points.size()>0){
-                sensor_msgs::PointCloud2 pos_cloud_msg;
-                pcl::toROSMsg(*pos_cloud, pos_cloud_msg);
-                pos_cloud_msg.header.frame_id = "world";  // 根据需要设置frame_id
-                pos_cloud_msg.header.stamp = ros::Time::now();
-                pos_cloud_pub_.publish(pos_cloud_msg);
-            }
-            if(clu_cloud->points.size()>0){
-                sensor_msgs::PointCloud2 clu_cloud_msg;
-                pcl::PointCloud<pcl::PointXYZ> clu_cloud_world = transformPointCloud(*clu_cloud, odom_msg);
-                pcl::toROSMsg(clu_cloud_world, clu_cloud_msg);
-                clu_cloud_msg.header.frame_id = "world";  // 根据需要设置frame_id
-                clu_cloud_msg.header.stamp = ros::Time::now();
-                clu_cloud_pub_.publish(clu_cloud_msg);
+            // if(pos_cloud->points.size()>0){
+            //     sensor_msgs::PointCloud2 pos_cloud_msg;
+            //     pcl::toROSMsg(*pos_cloud, pos_cloud_msg);
+            //     pos_cloud_msg.header.frame_id = "world";  // 根据需要设置frame_id
+            //     pos_cloud_msg.header.stamp = ros::Time::now();
+            //     pos_cloud_pub_.publish(pos_cloud_msg);
+            // }
 
-            }
+            // if(clu_cloud->points.size()>0){
+            //     sensor_msgs::PointCloud2 clu_cloud_msg;
+            //     pcl::PointCloud<pcl::PointXYZ> clu_cloud_world = transformPointCloud(*clu_cloud, odom_msg);
+            //     pcl::toROSMsg(clu_cloud_world, clu_cloud_msg);
+            //     clu_cloud_msg.header.frame_id = "world";  // 根据需要设置frame_id
+            //     clu_cloud_msg.header.stamp = ros::Time::now();
+            //     clu_cloud_pub_.publish(clu_cloud_msg);
+
+            // }
 
             if (num_boxes > 0) {
                 // 发布结果话题
