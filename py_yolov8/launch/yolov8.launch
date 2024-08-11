@@ -1,6 +1,6 @@
 <launch>
     <arg name="model_path" default="/home/nv/detection_ws/yolov8n.pt" />
-    <arg name="bbox_conf_thre" default="0.6" />
+    <arg name="bbox_conf_thre" default="0.7" />
     <arg name="save_img" default="True" />
     <arg name="save_frequency" default="1" />
     <arg name="raw_img" default="True" />
@@ -15,7 +15,10 @@
             <!-- /oak_ffc_4p/image_CAM_B/compressed,  -->
             <!-- /oak_ffc_4p/image_CAM_C/compressed,  -->
             <!-- /oak_ffc_4p/image_CAM_D/compressed, -->
-            /usb_cam_C/image_raw,
+            /usb_cam/image_raw,
+            /usb_cam1/image_raw,
+            /usb_cam2/image_raw,
+            /usb_cam3/image_raw,
         ]
         </rosparam>        
         <param name="raw_img" value="$(arg raw_img)" />

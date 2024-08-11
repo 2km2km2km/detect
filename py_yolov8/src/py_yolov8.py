@@ -21,7 +21,7 @@ from ultralytics import YOLO
 import numpy as np
 import time
 from std_msgs.msg import Header
-
+# import psutil
 model = None
 model_path =None
 # Create a CvBridge object
@@ -50,6 +50,13 @@ encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), compress_quality]
 # coco_person_only = False
 
 last_process_time = None
+
+# # 设置CPU亲和性
+# def set_cpu_affinity(cpu_ids):
+#     pid = os.getpid()  # 获取当前进程ID
+#     os.sched_setaffinity(pid, cpu_ids)  # 设置亲和性
+
+
 
 def callback(data, params):
     global last_process_time
@@ -254,6 +261,9 @@ if __name__ == '__main__':
     # model_path = sys.argv[1]
     model_path = rospy.get_param('~model_path')
     
+    # 将进程绑定到CPU 0和CPU 1
+    # set_cpu_affinity([0, 1])
+    
     print(f'使用模型: {model_path}')
     
     if not os.path.exists(model_path):
@@ -282,8 +292,10 @@ if __name__ == '__main__':
     if model_path.split('/')[-1].split('.')[0] == 'yolov8n':
         coco_person_only = True
         print(f'使用ultralytics的{model_path.split("/")[-1]}模型!仅导出person类别!(id=1)')
-        
+    
+
     model = YOLO(model_path, task='detect')
+    results = model("/home/detect_ws/src/py_yolov8/src/bus/jpg")  
     print("模型加载完毕")
     
     image_listener(image_topics, coco_person_only, max_freq)
