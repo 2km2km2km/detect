@@ -18,7 +18,9 @@
     #include <pcl/kdtree/kdtree_flann.h>
     #include <pcl/point_types.h>
     #include <target_dist_calculator/DetectOut.h>
-
+    #include <std_msgs/Float64MultiArray.h>
+    #include <visualization_msgs/Marker.h>
+    #include <visualization_msgs/MarkerArray.h>  
 
     #include <Eigen/Dense>
     #include <fstream>
@@ -116,6 +118,8 @@
             depth_pub_ = nh_.advertise<sensor_msgs::Image>("depth_image_topic", 10);
             image_pub_ = nh_.advertise<sensor_msgs::Image>("anno_image_topic", 10);
             clu_image_pub_ = nh_.advertise<sensor_msgs::Image>("clu_image_topic", 10);
+            vis_clu_bbox_pub_ = nh.advertise<visualization_msgs::MarkerArray>("vis_clu_bbox", 1);
+
         }
 
     private:
@@ -127,7 +131,7 @@
         map<string, ros::Publisher> target_pubs_coord_;
         map<string, ros::Publisher> target_pubs_img_with_coord_;
         vector<ros::Publisher> target_pubs_coord_world_;
-        ros::Publisher target_pub_bearing_camera_, depth_pub_, image_pub_, clu_image_pub_;
+        ros::Publisher target_pub_bearing_camera_, depth_pub_, image_pub_, clu_image_pub_, vis_clu_bbox_pub_;
         ros::Publisher cam_line_pub_, closest_point_pub_, closest_point_wh_pub_, pc_pub_, pos_cloud_pub_, clu_cloud_pub_, out_info_pub_;
 
         int camera_type_;
@@ -377,7 +381,7 @@
                     // }
                 }
             }
-
+            
             // 将深度图转换为颜色图用于可视化
             cv::Mat depth_image_8u;
             depth_image.convertTo(depth_image_8u, CV_8UC1, depth_scale / max_depth_value);
@@ -397,6 +401,8 @@
             target_dist_calculator::DetectOut out_msg;
             out_msg.classes.resize(num_boxes);
             out_msg.global_poses.resize(num_boxes);
+            out_msg.bbox_min.resize(num_boxes);
+            out_msg.bbox_max.resize(num_boxes);
             
             Mat image_czd = images_[camera].clone();
             std::vector<Eigen::Vector3d> pts_to_czd;
@@ -404,7 +410,8 @@
             pcl::PointCloud<pcl::PointXYZ>::Ptr pos_cloud(new pcl::PointCloud<pcl::PointXYZ>);
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr clu_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-
+            Eigen::Vector3d min_bbox_world(-1,-1,-1), max_bbox_world(-1,-1,-1);
+            visualization_msgs::MarkerArray vis_clu_bboxs;
             for (size_t i = 0; i < num_boxes; ++i) {
                 if (bbox_msg.bbox_conf[i]<min_bbox_confi_) continue;
                 // 解析边界框的坐标
@@ -591,10 +598,52 @@
                         }
                         if(best_cluster_id != -1) {
                             //可视化
+                            double min_x = std::numeric_limits<double>::infinity();
+                            double min_y = std::numeric_limits<double>::infinity();
+                            double min_z = std::numeric_limits<double>::infinity();
+                            double max_x = -std::numeric_limits<double>::infinity();
+                            double max_y = -std::numeric_limits<double>::infinity();
+                            double max_z = -std::numeric_limits<double>::infinity();
                             for (const auto& idx : cluster_indices[best_cluster_id].indices) {
                                 clu_cloud->points.push_back(bbox_cloud->points[idx]);
+                                Eigen::Vector3d bpoint_world = transformPoint(Eigen::Vector3d(bbox_cloud->points[idx].x, bbox_cloud->points[idx].y, bbox_cloud->points[idx].z), odom_msg);
+                                if (min_x > bpoint_world(0)) min_x = bpoint_world(0);
+                                if (min_y > bpoint_world(1)) min_y = bpoint_world(1);
+                                if (min_z > bpoint_world(2)) min_z = bpoint_world(2);
+                                if (max_x < bpoint_world(0)) max_x = bpoint_world(0);
+                                if (max_y < bpoint_world(1)) max_y = bpoint_world(1);
+                                if (max_z < bpoint_world(2)) max_z = bpoint_world(2);
                             }
+                            min_bbox_world = Eigen::Vector3d(min_x, min_y, min_z);
+                            max_bbox_world = Eigen::Vector3d(max_x, max_y, max_z);
                             
+                            visualization_msgs::Marker vis_clu_bbox;
+                            vis_clu_bbox.header.frame_id = "world";
+                            vis_clu_bbox.header.stamp = ros::Time::now();
+                            vis_clu_bbox.ns = "basic_shapes";
+                            vis_clu_bbox.id = i;  // 每个Marker需要一个唯一的ID
+                            vis_clu_bbox.type = visualization_msgs::Marker::CUBE;
+                            vis_clu_bbox.action = visualization_msgs::Marker::ADD;
+                            vis_clu_bbox.pose.position.x = (max_bbox_world(0) + min_bbox_world(0))/2;
+                            vis_clu_bbox.pose.position.y = (max_bbox_world(1) + min_bbox_world(1))/2;
+                            vis_clu_bbox.pose.position.z = (max_bbox_world(2) + min_bbox_world(2))/2;
+                            vis_clu_bbox.pose.orientation.x = 0.0;
+                            vis_clu_bbox.pose.orientation.y = 0.0;
+                            vis_clu_bbox.pose.orientation.z = 0.0;
+                            vis_clu_bbox.pose.orientation.w = 1.0;
+                            // 设置Marker的尺寸
+                            vis_clu_bbox.scale.x = max_bbox_world(0) - min_bbox_world(0);
+                            vis_clu_bbox.scale.y = max_bbox_world(1) - min_bbox_world(1);
+                            vis_clu_bbox.scale.z = max_bbox_world(2) - min_bbox_world(2);
+                            // 设置Marker的颜色
+                            vis_clu_bbox.color.r = 1.0f - 0.2f * i;  // 不同的颜色
+                            vis_clu_bbox.color.g = 0.2f * i;
+                            vis_clu_bbox.color.b = 0.5f;
+                            vis_clu_bbox.color.a = 0.2f;
+                            vis_clu_bbox.lifetime = ros::Duration();  // 保持显示直到被覆盖
+                            vis_clu_bboxs.markers.push_back(vis_clu_bbox);
+
+
                             // publish_cam_line(line[0], line[1], lidar_time);
                             depth = closest_point.norm();
                             std::cout<<"depth1 "<<depth<<std::endl;
@@ -617,7 +666,12 @@
                     out_msg.global_poses[i].x = closest_point_world(0);
                     out_msg.global_poses[i].y = closest_point_world(1);
                     out_msg.global_poses[i].z = closest_point_world(2);
-                    
+                    out_msg.bbox_min[i].x = min_bbox_world(0);
+                    out_msg.bbox_min[i].y = min_bbox_world(1);
+                    out_msg.bbox_min[i].z = min_bbox_world(2);
+                    out_msg.bbox_max[i].x = max_bbox_world(0);
+                    out_msg.bbox_max[i].y = max_bbox_world(1);
+                    out_msg.bbox_max[i].z = max_bbox_world(2);
                     // 绘制操作端图片
                     // 创建深度和3D坐标的字符串
                     char depth_str[50];
@@ -662,6 +716,13 @@
                     out_msg.global_poses[i].x = closest_point_world2(0);
                     out_msg.global_poses[i].y = closest_point_world2(1);
                     out_msg.global_poses[i].z = closest_point_world2(2);
+                    out_msg.bbox_min[i].x = min_bbox_world(0);
+                    out_msg.bbox_min[i].y = min_bbox_world(1);
+                    out_msg.bbox_min[i].z = min_bbox_world(2);
+                    out_msg.bbox_max[i].x = max_bbox_world(0);
+                    out_msg.bbox_max[i].y = max_bbox_world(1);
+                    out_msg.bbox_max[i].z = max_bbox_world(2);
+
                     pts_to_czd.push_back(closest_point_world2);
 
                     point_stamped.header.stamp = ros::Time::now();
@@ -723,6 +784,7 @@
                 out_msg.image_camera = camera;
                 out_info_pub_.publish(out_msg);
             }
+            if (vis_clu_bboxs.markers.size()>0) vis_clu_bbox_pub_.publish(vis_clu_bboxs);
 
 
 

@@ -75,7 +75,8 @@
   <build_depend>yaml-cpp</build_depend>
   <exec_depend>eigen3</exec_depend>
   <exec_depend>yaml-cpp</exec_depend>
-
+  <build_depend>visualization_msgs</build_depend>
+  <exec_depend>visualization_msgs</exec_depend>
   <build_depend>tf2</build_depend>
   <build_depend>tf2_ros</build_depend>
   <build_depend>tf2_geometry_msgs</build_depend>

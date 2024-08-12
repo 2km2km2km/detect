@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_geometry_msgs
   nav_msgs
   image_transport
+  visualization_msgs
 )
 
 ## Find OpenCV
@@ -41,8 +42,9 @@ generate_messages(
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS roscpp sensor_msgs cv_bridge geometry_msgs tf2 tf2_ros tf2_geometry_msgs nav_msgs 
+  CATKIN_DEPENDS roscpp sensor_msgs cv_bridge geometry_msgs tf2 tf2_ros tf2_geometry_msgs nav_msgs visualization_msgs
   DEPENDS PCL OpenCV
+  
 )
 
 ## Specify additional locations of header files
