@@ -496,6 +496,7 @@
                         // 遍历每个聚类
                         int cluster_id = 0;
                         double max_dispersion = -1.0;
+                        double min_depth = std::numeric_limits<double>::infinity();
                         int best_cluster_id = -1; 
                         for (const auto& indices : cluster_indices) {
                             std::cout<<"cluster_id "<<cluster_id<<" size "<<indices.indices.size()<<std::endl;
@@ -549,32 +550,36 @@
                             //     // continue;
                             //     break;
                             // }
-                            double dispersion = 0.0;
                             
-                            // std::cout<<"centroid_in_img "<<centroid_in_img(0) - x1<<" "<<centroid_in_img(1) - y1<<" | ";
+                            
                             // 计算离散度（点到质心的平均距离）
-                            for (const auto& idx : indices.indices) {
-                                Eigen::Vector3d point(bbox_cloud->points[idx].x, bbox_cloud->points[idx].y, bbox_cloud->points[idx].z);
-                                // dispersion += (point - centroid).norm();
-                                // 算二维距离
-                                Eigen::Vector3d point_in_camera = rotation_inv * point + translation_inv;
-                                Eigen::Vector2d point_in_img;
-                                point_in_img(0) = (camera_matrix_.at<double>(0, 0) * point_in_camera.x() / point_in_camera.z()) + camera_matrix_.at<double>(0, 2);
-                                point_in_img(1) = (camera_matrix_.at<double>(1, 1) * point_in_camera.y() / point_in_camera.z()) + camera_matrix_.at<double>(1, 2);
-                                dispersion += (point_in_img - centroid_in_img).norm();
-                                // std::cout<<point_in_img(0) - x1<<" "<<point_in_img(1) - y1<<" norm "<<(point_in_img - centroid_in_img).norm()<<" | ";
-                            }
-                            // std::cout<<std::endl;
-                            dispersion /= indices.indices.size();
-                            // std::cout<<"dispersion "<<dispersion<<std::endl;
+                            // double dispersion = 0.0;
+                            // for (const auto& idx : indices.indices) {
+                            //     Eigen::Vector3d point(bbox_cloud->points[idx].x, bbox_cloud->points[idx].y, bbox_cloud->points[idx].z);
+                            //     // dispersion += (point - centroid).norm();
+                            //     // 算二维距离
+                            //     Eigen::Vector3d point_in_camera = rotation_inv * point + translation_inv;
+                            //     Eigen::Vector2d point_in_img;
+                            //     point_in_img(0) = (camera_matrix_.at<double>(0, 0) * point_in_camera.x() / point_in_camera.z()) + camera_matrix_.at<double>(0, 2);
+                            //     point_in_img(1) = (camera_matrix_.at<double>(1, 1) * point_in_camera.y() / point_in_camera.z()) + camera_matrix_.at<double>(1, 2);
+                            //     dispersion += (point_in_img - centroid_in_img).norm();
+                            // }
+                            // dispersion /= indices.indices.size();
+                            // // std::cout<<"dispersion "<<dispersion<<std::endl;
 
-                            // 找到离散度最大的聚类
-                            if ((dispersion > max_dispersion) && (((centroid_in_img(1) - y1) / (y2 - y1)) > 0.2 && ((centroid_in_img(1) - y1) / (y2 - y1)) < 0.70) ) {
-                                max_dispersion = dispersion;
+                            // // 找到离散度最大的聚类
+                            // if ((dispersion > max_dispersion) && (((centroid_in_img(1) - y1) / (y2 - y1)) > 0.2 && ((centroid_in_img(1) - y1) / (y2 - y1)) < 0.70) ) {
+                            //     max_dispersion = dispersion;
+                            //     closest_point = centroid;
+                            //     best_cluster_id = cluster_id;
+                            // }
+                            // 找到深度最近的点云
+                            if ((centroid.norm() < min_depth) && (((centroid_in_img(1) - y1) / (y2 - y1)) > 0.2 && ((centroid_in_img(1) - y1) / (y2 - y1)) < 0.70) ) {
+                                min_depth = centroid.norm();
                                 closest_point = centroid;
                                 best_cluster_id = cluster_id;
-
                             }
+
                             // 输出结果
                             // std::cout << "Cluster " << cluster_id << " centroid: ["
                             //         << centroid.x() << ", " << centroid.y() << ", " << centroid.z() << "]" << std::endl;
@@ -602,6 +607,8 @@
                 }
                 if ((bbox_cloud->points.size() > 0 ) && (cluster_indices.size()>0) && (depth <= dist_use_lidar_)) {
                     // std::cout<<"depth2 "<<depth<<std::endl;
+                    // 使用深度加延长来确认位置
+                    closest_point = camera_origin_point + depth * bearing_camera;
                     Eigen::Vector3d closest_point_world = transformPoint(closest_point, odom_msg);
                     ROS_INFO("Use lidar Camera: %s, Depth: %.2f m, 3D Position in World: (%.2f, %.2f, %.2f)",
                             camera.c_str(), depth, closest_point_world(0), closest_point_world(1), closest_point_world(2));
